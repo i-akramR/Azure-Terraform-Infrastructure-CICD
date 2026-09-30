@@ -1,0 +1,278 @@
+trigger:
+  branches:
+    include:
+      - feature/pipeline-lab
+
+pool:
+  name: Agent_Nexus
+
+stages:
+  - stage: TerraformCI
+    displayName: "Terraform CI"
+
+    jobs:
+      - job: TerraformValidation
+        displayName: "Terraform Validation"
+
+        steps:
+          - checkout: self
+          - task: TerraformInstaller@1
+            displayName: "Install Terraform"
+            inputs:
+              terraformVersion: 'latest'
+          - task: CmdLine@2
+            inputs:
+              script: 'terraform version'
+            displayName: "Terraform Version"  
+          - task: TerraformTask@5
+            displayName: "Terraform Format Check"
+            inputs:
+              provider: 'azurerm'
+              command: 'custom'
+              outputTo: 'console'
+              customCommand: 'fmt'
+              environmentServiceNameAzureRM: 'svc-phx-infra'
+          - task: TerraformTask@5
+            displayName: "Terraform Init"
+            inputs:
+              provider: 'azurerm'
+              command: 'init'
+              workingDirectory: '$(System.DefaultWorkingDirectory)/environments/dev'
+              backendServiceArm: 'svc-phx-infra'
+              backendAzureRmOverrideSubscriptionID: 'f8b20355-0a02-41a3-8329-10cbc9dcdbb4'
+              backendAzureRmResourceGroupName: 'rg-dev-infra'
+              backendAzureRmStorageAccountName: 'catalyst101958030'
+              backendAzureRmContainerName: 'dev123'
+              backendAzureRmKey: 'dev123.terraform.tfstate'
+          - task: TerraformTask@5
+            displayName: "Terraform Validate"
+            inputs:
+              provider: 'azurerm'
+              command: 'validate'
+                
+  - stage: SecurityScan
+    displayName: "Security Scan"
+
+    dependsOn: TerraformCI
+
+    jobs:
+      - job: Security
+        displayName: "Security Scanning"
+
+        steps:
+          - checkout: self              
+
+          - task: CmdLine@2
+            inputs:
+              script: 'tflint --version'
+            displayName: "TFLint Version"
+          - task: CmdLine@2
+            inputs:
+              script: 'tflint --init'
+              workingDirectory: '$(System.DefaultWorkingDirectory)/environments/dev'
+            displayName: "TFLint Init"
+          - task: CmdLine@2
+            inputs:
+              script: 'tflint'
+              workingDirectory: '$(System.DefaultWorkingDirectory)/environments/dev'
+            displayName: "TFLint Scan"  
+          - task: CmdLine@2
+            inputs:
+              script: 'tfsec --version'
+            displayName: "TFSec Version"  
+          - task: CmdLine@2
+            inputs:
+              script: 'tfsec .'
+              workingDirectory: '$(System.DefaultWorkingDirectory)/environments/dev'
+            displayName: "TFSec Scan"
+          - task: UsePythonVersion@0
+            inputs:
+              versionSpec: '3.11'
+              addToPath: true
+              architecture: 'x64'
+            displayName: "Use Python 3.11"  
+          - task: CmdLine@2
+            inputs:
+              script: 'trivy --version'
+            displayName: "Trivy Version"  
+          - task: CmdLine@2
+            inputs:
+              script: 'trivy config .'
+            displayName: "Trivy IaC Scan"
+          - task: CmdLine@2
+            inputs:
+              script: 'trivy fs --scanners secret .'
+            displayName: "Trivy Secret Scan"
+          - task: CmdLine@2
+            inputs:
+              script: 'trivy fs --scanners secret .'
+            displayName: "Trivy Secret Scan"
+
+      - job: CostAnalysis
+        displayName: "Infrastructure Cost Analysis"
+        steps:
+          - checkout: self
+          - task: CmdLine@2
+            displayName: "Infracost Version"
+            inputs:
+              script: 'infracost --version'
+
+          - task: CmdLine@2
+            displayName: "Infracost Cost Breakdown"
+            inputs:
+              script: 'infracost breakdown --path .'
+
+  - stage: TerraformPlan
+    displayName: "Terraform Plan"
+
+    dependsOn: SecurityScan
+
+    jobs:
+      - job: TerraformPlan
+        displayName: "Terraform Plan"
+
+        steps:
+          - checkout: self              
+          - task: TerraformInstaller@1
+            displayName: "Install Terraform"
+            inputs:
+              terraformVersion: 'latest'
+          - task: TerraformTask@5
+            displayName: "Terraform Init"
+            inputs:
+              provider: 'azurerm'
+              command: 'init'
+              workingDirectory: '$(System.DefaultWorkingDirectory)/environments/dev'
+              backendServiceArm: 'svc-phx-infra'
+              backendAzureRmOverrideSubscriptionID: 'f8b20355-0a02-41a3-8329-10cbc9dcdbb4'
+              backendAzureRmResourceGroupName: 'rg-dev-infra'
+              backendAzureRmStorageAccountName: 'catalyst101958030'
+              backendAzureRmContainerName: 'dev123'
+              backendAzureRmKey: 'dev123.terraform.tfstate'
+      - job: PublishTerraformPlanArtifact
+        displayName: "Publish Terraform Plan Artifact"
+
+        steps:
+          - checkout: self   
+          - task: TerraformInstaller@1
+            displayName: "Install Terraform"
+            inputs:
+              terraformVersion: 'latest'
+              
+          - task: TerraformTask@5
+            displayName: "Terraform Init"
+            inputs:
+              provider: 'azurerm'
+              command: 'init'
+              workingDirectory: '$(System.DefaultWorkingDirectory)/environments/dev'
+              backendServiceArm: 'svc-phx-infra'
+              backendAzureRmOverrideSubscriptionID: 'f8b20355-0a02-41a3-8329-10cbc9dcdbb4'
+              backendAzureRmResourceGroupName: 'rg-dev-infra'
+              backendAzureRmStorageAccountName: 'catalyst101958030'
+              backendAzureRmContainerName: 'dev123'
+              backendAzureRmKey: 'dev123.terraform.tfstate'          
+          - task: TerraformTask@5
+            displayName: "Terraform Plan"
+            inputs:
+              provider: 'azurerm'
+              command: 'plan'
+              workingDirectory: '$(System.DefaultWorkingDirectory)/environments/dev'
+              commandOptions: '-out=tfplan'
+              environmentServiceNameAzureRM: 'svc-phx-infra'
+                         
+          - task: PublishPipelineArtifact@1
+            displayName: "Publish Terraform Plan"
+            inputs:
+              targetPath: '$(System.DefaultWorkingDirectory)/environments/dev/tfplan'
+              artifact: 'terraform-plan'
+              publishLocation: 'pipeline'
+
+  - stage: ManualApproval
+    displayName: "Mannual Approval"
+
+    dependsOn: TerraformPlan
+    condition: succeeded()
+
+    jobs:
+      - job: ManualApproval
+        displayName: "Approve Terraform Apply"
+        pool: server
+
+        steps:
+          - task: ManualValidation@1
+            displayName: "Approve Terraform Apply"
+            timeoutInMinutes: 1440
+            inputs:
+              notifyUsers: 'xyz@falcon.com'
+              instructions: |
+                Terraform Plan has completed successfully.
+                
+                Please review the Terraform plan/artifact before approving.
+                
+                Approve this validation to continue to Terraform Apply.
+              onTimeout: reject
+
+  - stage: TerraformApply
+    displayName: "Terraform Apply"
+    dependsOn: ManualApproval
+    condition: succeeded()
+
+    jobs:
+
+      - job: DownloadPipelineArtifact
+        displayName: "Download Terraform Plan Artifact"
+
+        steps:
+          - checkout: self
+          - task: TerraformInstaller@1
+            displayName: "Install Terraform"
+            inputs:
+              terraformVersion: 'latest'
+          - task: DownloadBuildArtifacts@1
+            displayName: "Download Terraform Plan Artifact"
+            inputs:
+              buildType: 'current'
+              downloadType: 'single'
+              artifactName: 'terraform-plan'
+              downloadPath: '$(System.ArtifactsDirectory)/environemnts/dev'
+
+      - job: TerraformApply
+        displayName: "Terraform Apply"
+        dependsOn: DownloadPipelineArtifact  
+
+        steps:
+          - checkout: self
+
+          - task: TerraformInstaller@1
+            displayName: "Install Terraform"
+            inputs:
+              terraformVersion: 'latest'
+
+          - task: DownloadBuildArtifacts@1
+            displayName: "Download Terraform Plan"
+            inputs:
+              buildType: 'current'
+              downloadType: 'single'
+              artifactName: 'terraform-plan'
+              downloadPath: '$(System.DefaultWorkingDirectory)/environments/dev'
+
+          - task: TerraformTask@5
+            displayName: "Terraform Init"
+            inputs:
+              provider: 'azurerm'
+              command: 'init'
+              workingDirectory: '$(System.DefaultWorkingDirectory)/environments/dev'
+              backendServiceArm: 'svc-phx-infra'
+              backendAzureRmOverrideSubscriptionID: 'f8b20355-0a02-41a3-8329-10cbc9dcdbb4'
+              backendAzureRmResourceGroupName: 'rg-dev-infra'
+              backendAzureRmStorageAccountName: 'catalyst101958030'
+              backendAzureRmContainerName: 'dev123'
+              backendAzureRmKey: 'dev123.terraform.tfstate'
+          - task: TerraformTask@5
+            displayName: "Terraform Apply"
+            inputs:
+              provider: 'azurerm'
+              command: 'apply'
+              workingDirectory: '$(System.DefaultWorkingDirectory)/environments/dev'
+              commandOptions: 'tfplan'
+              environmentServiceNameAzureRM: 'svc-phx-infra'
